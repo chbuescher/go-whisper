@@ -18,6 +18,9 @@ import (
 )
 
 func init() {
+	log.SetFlags(log.Lshortfile)
+	rand.Seed(time.Now().UnixNano())
+
 	if err := os.MkdirAll("tmp", 0755); err != nil {
 		panic(err)
 	}
@@ -56,11 +59,6 @@ func TestBitsReadWrite(t *testing.T) {
 			t.Errorf("%d: br.Read(%d) = %x; want %b", i, d.len, got, want)
 		}
 	}
-}
-
-func init() {
-	log.SetFlags(log.Lshortfile)
-	rand.Seed(time.Now().UnixNano())
 }
 
 func TestBlockReadWrite1(t *testing.T) {
@@ -934,45 +932,56 @@ func TestFillCompressed(t *testing.T) {
 		t.Error(err)
 	}
 
-	compare := func(w1, w2 *Whisper, from, until int) {
-		valsc, err := w1.Fetch(from, until)
-		if err != nil {
-			t.Error(err)
-		}
-		valss, err := w2.Fetch(from, until)
-		if err != nil {
-			t.Error(err)
-		}
-		var diff, same int
-		for i := 0; i < len(valsc.values); i++ {
-			vc := valsc.values[i]
-			vs := valss.values[i]
-			if math.IsNaN(vc) && math.IsNaN(vs) {
-				same++
-			} else if vc != vs {
-				t.Errorf("%d/%d %d: %v != %v\n", i, len(valsc.values), valsc.fromTime+i*valsc.step, vc, vs)
-				diff++
-			} else {
-				same++
-			}
-		}
-		if diff > 0 {
-			t.Errorf("diff = %d", diff)
-			t.Errorf("same = %d", same)
-		}
-	}
-
 	t.Log("comparing 2 years archive")
-	compare(compressed, standard, int(twoYearsAgo.Unix()), int(Now().Add(time.Hour*24*-28).Unix()))
+	compareWhisperFiles(t, compressed, standard, int(twoYearsAgo.Unix()), int(Now().Add(time.Hour*24*-28).Unix()))
 	t.Log("comparing 1 month archive")
-	compare(compressed, standard, int(oneMonthAgo.Add(time.Hour).Unix()), int(Now().Add(time.Hour*24*-2-time.Hour).Unix()))
+	compareWhisperFiles(t, compressed, standard, int(oneMonthAgo.Add(time.Hour).Unix()), int(Now().Add(time.Hour*24*-2-time.Hour).Unix()))
 
 	oldCompressed, err := OpenWithOptions(fpath+".original.cwsp", &Options{})
 	if err != nil {
 		t.Error(err)
 	}
 	t.Log("comparing 2 days archive")
-	compare(compressed, oldCompressed, int(Now().Add(time.Hour*24*-2+time.Hour).Unix()), int(Now().Unix()))
+	compareWhisperFiles(t, compressed, oldCompressed, int(Now().Add(time.Hour*24*-2+time.Hour).Unix()), int(Now().Unix()))
+}
+
+func compareWhisperFiles(t *testing.T, w1, w2 *Whisper, from, until int) {
+	vals1, err := w1.Fetch(from, until)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	vals2, err := w2.Fetch(from, until)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	var diff, same, nan int
+	for i := 0; i < len(vals1.values); i++ {
+		vc := vals1.values[i]
+		vs := vals2.values[i]
+		if math.IsNaN(vc) && math.IsNaN(vs) {
+			same++
+			nan++
+		} else if vc != vs {
+			t.Errorf("%d/%d %d (%s): %v != %v\n", i, len(vals1.values), vals1.fromTime+i*vals1.step, time.Unix(int64(vals1.fromTime+i*vals1.step), 0), vc, vs)
+			diff++
+		} else {
+			same++
+		}
+	}
+	fromt, untilt := time.Unix(int64(from), 0), time.Unix(int64(until), 0)
+	t.Logf("from %s until %s %s", fromt, untilt, untilt.Sub(fromt))
+	if diff > 0 {
+		t.Errorf("diff = %d", diff)
+		t.Errorf("same = %d", same)
+		t.Errorf("nan = %d", nan)
+	} else {
+		t.Logf("diff = %d", diff)
+		t.Logf("same = %d", same)
+		t.Logf("nan = %d", nan)
+	}
 }
 
 func TestSanitizeAvgCompressedPointSizeOnCreate(t *testing.T) {
@@ -1200,6 +1209,7 @@ func TestFillCompressedMix(t *testing.T) {
 		t.Error(err)
 	}
 
+	// TODO: merge with compareWhisperFiles
 	compare := func(w1, w2 *Whisper, from, until int) {
 		valsc, err := w1.Fetch(from, until)
 		if err != nil {

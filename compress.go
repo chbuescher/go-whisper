@@ -25,6 +25,9 @@ var (
 	CompressedArchiveInfoSize     = 92 + FreeCompressedArchiveInfoSize
 	FreeCompressedArchiveInfoSize = 36
 
+	compressedHeaderAggregationOffset = len(compressedMagicString) + VersionSize
+	compressedHeaderXFFOffset         = compressedHeaderAggregationOffset + IntSize*2
+
 	BlockRangeSize = 16
 	endOfBlockSize = 5
 
@@ -1609,46 +1612,24 @@ func (mf *memFile) Truncate(size int64) error {
 
 func (mf *memFile) dumpOnDisk(fpath string) error { return ioutil.WriteFile(fpath, mf.data, 0644) }
 
+// FillCompressed backfill cwhisper files from srcw.
+// The old and new whisper should have the same retention policies.
 func (dstw *Whisper) FillCompressed(srcw *Whisper) error {
 	defer dstw.Close()
 
-	var rets []*Retention
-	for _, arc := range dstw.archives {
-		rets = append(rets, &Retention{secondsPerPoint: arc.secondsPerPoint, numberOfPoints: arc.numberOfPoints})
+	pointsByArchives, err := dstw.retrieveAndMerge(srcw)
+	if err != nil {
+		return err
 	}
 
-	var pointsByArchives = make([][]dataPoint, len(dstw.archives))
-	for i, srcArc := range srcw.archives {
-		until := int(Now().Unix())
-		from := until - srcArc.MaxRetention()
+	var rets []*Retention
+	for i, arc := range dstw.archives {
+		ret := &Retention{secondsPerPoint: arc.secondsPerPoint, numberOfPoints: arc.numberOfPoints}
+		points := pointsByArchives[i]
 
-		srcPoints, err := srcw.FetchByAggregation(from, until, srcArc.aggregationSpec)
-		if err != nil {
-			return err
-		}
-		dstPoints, err := dstw.FetchByAggregation(from, until, srcArc.aggregationSpec)
-		if err != nil {
-			return err
-		}
+		ret.avgCompressedPointSize = estimatePointSize(points, ret, ret.calculateSuitablePointsPerBlock(dstw.pointsPerBlock))
 
-		points := make([]dataPoint, len(dstPoints.values))
-		var lenp int
-		for i, val := range dstPoints.values {
-			if !math.IsNaN(val) {
-			} else if !math.IsNaN(srcPoints.values[i]) {
-				val = srcPoints.values[i]
-			} else {
-				continue
-			}
-
-			points[lenp].interval = srcPoints.fromTime + i*srcArc.secondsPerPoint
-			points[lenp].value = val
-			lenp++
-		}
-		points = points[:lenp]
-
-		pointsByArchives[i] = points
-		rets[i].avgCompressedPointSize = estimatePointSize(points, rets[i], rets[i].calculateSuitablePointsPerBlock(dstw.pointsPerBlock))
+		rets = append(rets, ret)
 	}
 
 	var mixSpecs []MixAggregationSpec
