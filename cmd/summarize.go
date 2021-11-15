@@ -1,3 +1,4 @@
+//go:build ignore
 // +build ignore
 
 package main
@@ -19,6 +20,7 @@ func main() {
 	now := flag.Int("now", int(time.Now().Add(0*time.Hour).Unix()), "specify the until value")
 	offset := flag.Int("offset", 3600*12, "until = now - offset (unit: hour)")
 	quarantinesRaw := flag.String("quarantines", "2019-02-21,2019-02-22", "ignore data started from this point")
+	pretty := flag.Bool("pretty", false, "pretty output")
 	flag.Parse()
 
 	var quarantines [][2]int
@@ -81,7 +83,14 @@ func main() {
 		}
 
 		sum := md5.Sum(data)
-		sums = append(sums, fmt.Sprintf("%x,%d,%d,%d", sum[:], nonNans, nonZeros, len(vals)))
+		sums = append(sums, fmt.Sprintf("%s,%x,%d,%d,%d", ret, sum[:], nonNans, nonZeros, len(vals)))
 	}
-	fmt.Printf("%s,%x,%s\n", path, md5.Sum([]byte(strings.Join(sums, ","))), strings.Join(sums, ","))
+	if *pretty {
+		fmt.Printf("archive,checksum,number_of_non_nans,number_of_non_zeros,number_of_points\n")
+		for _, s := range sums {
+			fmt.Println(s)
+		}
+	} else {
+		fmt.Printf("%s,%x,%s\n", path, md5.Sum([]byte(strings.Join(sums, ","))), strings.Join(sums, ","))
+	}
 }

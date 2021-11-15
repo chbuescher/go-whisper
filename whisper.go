@@ -39,6 +39,11 @@ const (
 	Years   = 86400 * 365
 )
 
+const (
+	classicHeaderAggregationOffset = 0
+	classicHeaderXFFOffset         = IntSize * 2
+)
+
 // Note: 4 bytes long in Whisper Header, 1 byte long in Archive Header
 type AggregationMethod int
 
@@ -78,7 +83,7 @@ func (am AggregationMethod) String() string {
 }
 
 func ParseAggregationMethod(am string) AggregationMethod {
-	switch am {
+	switch strings.ToLower(am) {
 	case "average", "avg":
 		return Average
 	case "sum":
@@ -326,6 +331,14 @@ func ParseRetentionDefs(retentionDefs string) (Retentions, error) {
 		retentions = append(retentions, retention)
 	}
 	return retentions, nil
+}
+
+func MustParseRetentionDefs(retentionDefs string) Retentions {
+	rets, err := ParseRetentionDefs(retentionDefs)
+	if err != nil {
+		panic(err)
+	}
+	return rets
 }
 
 // Wrappers for whisper.file operations
@@ -772,25 +785,8 @@ func (whisper *Whisper) bufferSize() int {
 	return bufSize
 }
 
-/* Return aggregation method */
-func (whisper *Whisper) AggregationMethod() string {
-	aggr := "unknown"
-	switch whisper.aggregationMethod {
-	case Average:
-		aggr = "Average"
-	case Sum:
-		aggr = "Sum"
-	case First:
-		aggr = "First"
-	case Last:
-		aggr = "Last"
-	case Max:
-		aggr = "Max"
-	case Min:
-		aggr = "Min"
-	}
-	return aggr
-}
+/* Return raw aggregation method */
+func (whisper *Whisper) AggregationMethod() AggregationMethod { return whisper.aggregationMethod }
 
 /* Return max retention in seconds */
 func (whisper *Whisper) MaxRetention() int {
@@ -974,6 +970,10 @@ func (whisper *Whisper) UpdateManyForArchive(points []*TimeSeriesPoint, targetRe
 
 func (whisper *Whisper) archiveUpdateMany(archive *archiveInfo, points []*TimeSeriesPoint) error {
 	alignedPoints := alignPoints(archive, points)
+	return whisper.archiveUpdateManyDataPoints(archive, alignedPoints, true)
+}
+
+func (whisper *Whisper) archiveUpdateManyDataPoints(archive *archiveInfo, alignedPoints []dataPoint, propagate bool) error {
 	intervals, packedBlocks := packSequences(archive, alignedPoints)
 
 	baseInterval := whisper.getBaseInterval(archive)
@@ -1002,6 +1002,10 @@ func (whisper *Whisper) archiveUpdateMany(archive *archiveInfo, points []*TimeSe
 		}
 	}
 
+	if !propagate {
+		return nil
+	}
+
 	higher := archive
 	lowerArchives := whisper.lowerArchives(archive)
 
@@ -1023,6 +1027,7 @@ func (whisper *Whisper) archiveUpdateMany(archive *archiveInfo, points []*TimeSe
 		}
 		higher = lower
 	}
+
 	return nil
 }
 
@@ -1426,22 +1431,23 @@ func (r *Retention) calculateSuitablePointsPerBlock(defaultSize int) int {
 	return r.numberOfPoints + 16
 }
 
-func (r Retention) String() string {
-	toStr := func(v int) string {
-		switch {
-		case v >= 365*24*60*60:
-			return fmt.Sprintf("%dy", v/(365*24*60*60))
-		case v >= 24*60*60:
-			return fmt.Sprintf("%dd", v/(24*60*60))
-		case v >= 60*60:
-			return fmt.Sprintf("%dh", v/(60*60))
-		case v >= 60:
-			return fmt.Sprintf("%dm", v/(60))
-		default:
-			return fmt.Sprintf("%ds", v)
-		}
+func durationString(v int) string {
+	switch {
+	case v >= 365*24*60*60:
+		return fmt.Sprintf("%dy", v/(365*24*60*60))
+	case v >= 24*60*60:
+		return fmt.Sprintf("%dd", v/(24*60*60))
+	case v >= 60*60:
+		return fmt.Sprintf("%dh", v/(60*60))
+	case v >= 60:
+		return fmt.Sprintf("%dm", v/(60))
+	default:
+		return fmt.Sprintf("%ds", v)
 	}
-	return fmt.Sprintf("%s:%s", toStr(r.secondsPerPoint), toStr(r.secondsPerPoint*r.numberOfPoints))
+}
+
+func (r Retention) String() string {
+	return fmt.Sprintf("%s:%s", durationString(r.secondsPerPoint), durationString(r.secondsPerPoint*r.numberOfPoints))
 }
 
 func NewRetention(secondsPerPoint, numberOfPoints int) Retention {
@@ -1451,6 +1457,7 @@ func NewRetention(secondsPerPoint, numberOfPoints int) Retention {
 	}
 }
 
+// TODO: maybe we should make it array of structs, rather than an array of struct pointers.
 type Retentions []*Retention
 
 func (r Retentions) Len() int {
@@ -1459,6 +1466,31 @@ func (r Retentions) Len() int {
 
 func (r Retentions) Swap(i, j int) {
 	r[i], r[j] = r[j], r[i]
+}
+
+func NewRetentionsNoPointer(r2 []Retention) Retentions {
+	var nr2 Retentions
+	for i := range r2 {
+		nr2 = append(nr2, &r2[i])
+	}
+
+	return nr2
+}
+
+func (r1 Retentions) Equal(r2 Retentions) bool {
+	if len(r1) != len(r2) {
+		return false
+	}
+	for i := range r1 {
+		if r1[i].secondsPerPoint != r2[i].secondsPerPoint {
+			return false
+		}
+		if r1[i].numberOfPoints != r2[i].numberOfPoints {
+			return false
+		}
+	}
+
+	return true
 }
 
 type retentionsByPrecision struct{ Retentions }
@@ -1710,4 +1742,240 @@ func (mas *MixAggregationSpec) String() string {
 		return fmt.Sprintf("p%f", mas.Percentile)
 	}
 	return mas.Method.String()
+}
+
+func (whisper *Whisper) HasMatchingConfigs(rets Retentions, aggr AggregationMethod, xff float32, options *Options) bool {
+	if !rets.Equal(NewRetentionsNoPointer(whisper.Retentions())) {
+		return false
+	}
+	if whisper.aggregationMethod != aggr {
+		return false
+	}
+
+	// TODO: support whisper -> cwhisper conversion and vice versa
+	// if whisper.compressed != options.Compressed {
+	// 	return false
+	// }
+
+	return true
+}
+
+func (whisper *Whisper) UpdateConfig(rets Retentions, aggr AggregationMethod, xff float32, options *Options) (err error) {
+	newFilename := whisper.file.Name() + ".migrate"
+	os.Remove(newFilename) // in case there are broken/corrupted migrate files not being cleaned up properly
+
+	defer func() {
+		if r := recover(); r != nil {
+			// make sure that temporary file are removed properly
+			os.Remove(newFilename)
+
+			err = fmt.Errorf("%s\n%s", r, debug.Stack())
+		}
+	}()
+
+	updateRets := !rets.Equal(NewRetentionsNoPointer(whisper.Retentions()))
+	updateAggrXff := whisper.aggregationMethod != aggr || whisper.xFilesFactor != xff
+
+	if updateRets {
+		newWhisper, err := CreateWithOptions(newFilename, rets, aggr, xff, options)
+		if err != nil {
+			return err
+		}
+
+		if options.Compressed {
+			err = newWhisper.FillCompressed(whisper)
+		} else {
+			err = newWhisper.FillClassic(whisper)
+		}
+
+		// error ignored here, not much we can do if we fail to close files?
+		newWhisper.Close()
+		whisper.Close()
+
+		if err != nil {
+			return err
+		}
+
+		// how about aggregations: go-carbon will use the new aggr when updating retentions
+		return os.Rename(newFilename, whisper.file.Name())
+	}
+
+	if updateAggrXff {
+		// no need to create a new whisper file, just do in-place update
+		// for aggregations and xff. histories won't be changed.
+		whisper.xFilesFactor = xff
+		whisper.aggregationMethod = aggr
+
+		aggData := make([]byte, IntSize)
+		packInt(aggData, int(whisper.aggregationMethod), 0)
+		xffData := make([]byte, FloatSize)
+		packFloat32(xffData, whisper.xFilesFactor, 0)
+
+		if options.Compressed {
+			if _, err := whisper.file.WriteAt(aggData, int64(compressedHeaderAggregationOffset)); err != nil {
+				return err
+			}
+			if _, err := whisper.file.WriteAt(xffData, int64(compressedHeaderXFFOffset)); err != nil {
+				return err
+			}
+		} else {
+			if _, err := whisper.file.WriteAt(aggData, int64(classicHeaderAggregationOffset)); err != nil {
+				return err
+			}
+			if _, err := whisper.file.WriteAt(xffData, int64(classicHeaderXFFOffset)); err != nil {
+				return err
+			}
+		}
+
+		if _, err := whisper.file.(*os.File).Seek(0, 0); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	return nil
+}
+
+func (dstw *Whisper) FillClassic(srcw *Whisper) error {
+	pointsByArchives, err := dstw.retrieveAndMerge(srcw)
+	if err != nil {
+		return err
+	}
+
+	for i, points := range pointsByArchives {
+		if len(points) == 0 {
+			continue
+		}
+
+		archive := dstw.archives[i]
+		if err := dstw.archiveUpdateManyDataPoints(archive, points, false); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// retrieveAndMerge returns data points from both dst and src whisper files. It tries to
+// figure out if src has data points of the same resolution/secondsPerPoint and performs
+// merge if the dst has no null datapoints at the same timestamp.
+func (dstw *Whisper) retrieveAndMerge(srcw *Whisper) (pointsByArchives [][]dataPoint, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%s\n%s", r, debug.Stack())
+		}
+	}()
+
+	// notable cases:
+	//   case:
+	//     src: 1m:30d,1h:10y
+	//     dst: 1m:60d,1h:20y
+	//   case:
+	//     src: 1m:30d,1h:10y
+	//     dst: 1m:60d,1h:5y,1d:100y
+	//   case:
+	//     src: 1m:30d,1h:10y
+	//     dst: 1m:60d,30m:1y,1h:10y
+	//   case:
+	//     src: 1m:30d,1h:10y
+	//     dst: 30s:30d,30m:1y,1h:10y
+	//   case:
+	//     src: 1m:30d,1h:10y
+	//     dst: 1s:4d,1m:60d,1h:20y
+	//   case:
+	//     src: 1m:30d,1h:10y
+	//     dst: 1s:4d,1m:20d,1h:20y
+
+	const fromBuffer = 5
+
+	pointsByArchives = make([][]dataPoint, len(dstw.archives))
+	for i, dstArc := range dstw.archives {
+		// TODO: fix needed. should limit from/until to the smaller retentions, in src or in dst.
+		until := int(Now().Unix())
+		from := until - dstArc.MaxRetention()
+
+		// ignore the last data point to avoid going into the lower archives
+		if dstArc.Retention.secondsPerPoint <= fromBuffer {
+			from += dstArc.SecondsPerPoint()
+		}
+
+		var srcArc *archiveInfo
+		srcPoints := &TimeSeries{}
+		for _, srcArcx := range srcw.archives {
+			if srcArcx.secondsPerPoint != dstArc.secondsPerPoint {
+				continue
+			}
+
+			srcFrom := from
+			srcUtil := until
+			if dstArc.MaxRetention() > srcArcx.MaxRetention() {
+				srcFrom = until - srcArcx.MaxRetention()
+
+				if srcArcx.Retention.secondsPerPoint <= fromBuffer {
+					srcFrom += srcArcx.SecondsPerPoint()
+				}
+			}
+
+			// TODO: more thoughts needed for mix aggregation backfilling?
+			if dstw.aggregationMethod == Mix &&
+				srcArcx.aggregationSpec != nil &&
+				dstArc.aggregationSpec != nil &&
+				srcArcx.aggregationSpec.Method != dstArc.aggregationSpec.Method {
+				continue
+			}
+
+			srcArc = srcArcx
+			srcPoints, err = srcw.FetchByAggregation(srcFrom, srcUtil, srcArcx.aggregationSpec)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		dstPoints, err := dstw.FetchByAggregation(from, until, dstArc.aggregationSpec)
+		if err != nil {
+			return nil, err
+		}
+
+		if srcArc != nil {
+			// in theory, this error shouldn't be happening, but we want to
+			// be sure that we fetching and merging values from archives in
+			// the same resolution, i.e. secondsPerPoint.
+			if srcPoints.step != srcArc.secondsPerPoint || dstPoints.step != dstArc.secondsPerPoint {
+				return nil, fmt.Errorf("whisper.retrieveAndMerge: failed to retrieve values from proper archive. src:%s:%s dst:%s:%s", srcArc.Retention, durationString(srcPoints.step), dstArc.Retention, durationString(dstPoints.step))
+			}
+		}
+
+		var points = make([]dataPoint, len(dstPoints.values))
+		var pidx int
+		var srcOffset = (dstPoints.fromTime - srcPoints.fromTime) / dstPoints.step
+
+		// step 2
+		//   dst:  0 - 60
+		//   src: 32 - 60
+		// step 1
+		//   dst: 32 - 60
+		//   src:  0 - 60
+		for i, val := range dstPoints.values {
+			if !math.IsNaN(val) {
+			} else if srcArc != nil &&
+				srcArc.secondsPerPoint == dstArc.secondsPerPoint &&
+				0 <= i+srcOffset &&
+				i+srcOffset < len(srcPoints.values) &&
+				!math.IsNaN(srcPoints.values[i+srcOffset]) { // Only copy histories when resolution is the same
+				val = srcPoints.values[i+srcOffset]
+			} else {
+				continue
+			}
+
+			points[pidx].interval = dstPoints.fromTime + i*dstArc.secondsPerPoint
+			points[pidx].value = val
+			pidx++
+		}
+		points = points[:pidx]
+
+		pointsByArchives[i] = points
+	}
+
+	return pointsByArchives, nil
 }
