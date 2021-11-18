@@ -19,7 +19,7 @@ import (
 
 func init() {
 	log.SetFlags(log.Lshortfile)
-	rand.Seed(time.Now().UnixNano())
+	rand.Seed(time.Now().UnixNano()) // skipcq: GSC-G404
 
 	if err := os.MkdirAll("tmp", 0750); err != nil {
 		panic(err)
@@ -81,7 +81,7 @@ func TestBlockReadWrite1(t *testing.T) {
 
 		var input []dataPoint
 		{
-			rand.Seed(time.Now().Unix())
+			rand.Seed(time.Now().Unix()) // skipcq: GSC-G404
 			input = append(input, dataPoint{interval: next(1), value: 1})
 			input = append(input, dataPoint{interval: next(1), value: 1})
 			input = append(input, dataPoint{interval: next(1), value: 1})
@@ -422,7 +422,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			fullTest: func() bool { return true },
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
 				return &TimeSeriesPoint{
-					Value: rand.NormFloat64(),
+					Value: rand.NormFloat64(),                                                          // skipcq: GSC-G404
 					Time:  int(prevTime.Add(time.Duration(rand.Intn(3600*24)+1) * time.Second).Unix()), // skipcq: GSC-G404
 				}
 			},
@@ -443,8 +443,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			fullTest:  func() bool { return true },
 			randLimit: func() int { return 300 },
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
-				return &TimeSeriesPoint{Value: 2000.0 + float64(rand.Intn(1000)), // skipcq: GSC-G404
-					Time: int(prevTime.Add(time.Second * 60).Unix())} // skipcq: GSC-G404
+				return &TimeSeriesPoint{Value: 2000.0 + float64(rand.Intn(1000)), Time: int(prevTime.Add(time.Second * 60).Unix())} // skipcq: GSC-G404
 			},
 		},
 
@@ -454,7 +453,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			fullTest: func() bool { return *fullTest3 },
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
 				return &TimeSeriesPoint{
-					Value: rand.NormFloat64(),
+					Value: rand.NormFloat64(), // skipcq: GSC-G404
 					Time:  int(prevTime.Add(time.Second).Unix()),
 				}
 			},
@@ -479,7 +478,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 		},
 	}
 
-	os.MkdirAll("tmp", 0600)
+	os.MkdirAll("tmp", 0750)
 	inMemory := true
 	for i := range inputs {
 		input := inputs[i]
@@ -736,8 +735,8 @@ func TestCompressTo(t *testing.T) {
 				// Time: int(start.Add(time.Duration(i) * time.Second).Unix()),
 				Time: int(start.Unix()),
 				// Value: float64(i),
-				// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
-				// Value: rand.NormFloat64(),
+				// Value: 2000.0 + float64(rand.Intn(100000))/100.0, // skipcq: GSC-G404
+				// Value: rand.NormFloat64(), // skipcq: GSC-G404
 				Value: float64(rand.Intn(100000)), // skipcq: GSC-G404
 			})
 		}
@@ -805,9 +804,9 @@ func TestRandomReadWrite(t *testing.T) {
 		}
 		ts := &TimeSeriesPoint{
 			Time:  int(ptime.Unix()),
-			Value: rand.NormFloat64(),
-			// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
-			// Value: float64(rand.Intn(100000)),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
+			// Value: 2000.0 + float64(rand.Intn(100000))/100.0, // skipcq: GSC-G404
+			// Value: float64(rand.Intn(100000)), // skipcq: GSC-G404
 		}
 		ps = append(ps, ts)
 		vals = append(vals, ts.Value)
@@ -873,7 +872,7 @@ func TestFillCompressed(t *testing.T) {
 	for i := 0; i < 2*365*24-28*24; i++ {
 		points = append(points, &TimeSeriesPoint{
 			Time:  int(twoYearsAgo.Add(time.Hour * time.Duration(i)).Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 	}
 	if err := standard.UpdateMany(points); err != nil {
@@ -885,7 +884,7 @@ func TestFillCompressed(t *testing.T) {
 	for i := 0; i < 28*24*60-2*24*60; i++ {
 		points = append(points, &TimeSeriesPoint{
 			Time:  int(oneMonthAgo.Add(time.Minute * time.Duration(i)).Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 	}
 	if err := standard.UpdateMany(points); err != nil {
@@ -911,7 +910,7 @@ func TestFillCompressed(t *testing.T) {
 	for i := 0; i < 60*60*24*2; i++ {
 		points = append(points, &TimeSeriesPoint{
 			Time:  int(twoDaysAgo.Add(time.Second * time.Duration(i)).Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 	}
 	if err := compressed.UpdateMany(points); err != nil {
@@ -1079,11 +1078,11 @@ func TestEstimatePointSize(t *testing.T) {
 	// 	var ds []dataPoint
 	// 	var start = 1543449600
 	// 	for j := 0; j < i; j++ {
-	// 		ds = append(ds, dataPoint{interval: start, value: rand.NormFloat64()})
+	// 		ds = append(ds, dataPoint{interval: start, value: rand.NormFloat64()}) // skipcq: GSC-G404
 	// 		// ds = append(ds, dataPoint{interval: start, value: 10})
 	//
 	// 		start += 1
-	// 		// start += rand.Int()
+	// 		// start += rand.Int() // skipcq: GSC-G404
 	// 	}
 	// 	size := estimatePointSize(ds, &Retention{secondsPerPoint: 10, numberOfPoints: 17280}, DefaultPointsPerBlock)
 	// 	fmt.Printf("%d: %f\n", i, size)
@@ -1135,7 +1134,7 @@ func TestFillCompressedMix(t *testing.T) {
 	for i, end := 0, 60*60*24*80; i < end; i++ {
 		points = append(points, &TimeSeriesPoint{
 			Time:  int(nowNext().Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 
 		if len(points) > limit || i == end-1 {
@@ -1178,7 +1177,7 @@ func TestFillCompressedMix(t *testing.T) {
 	for i, end := 0, 60*60*24*2; i < end; i++ {
 		points = append(points, &TimeSeriesPoint{
 			Time:  int(nowNext().Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 
 		if len(points) > limit || i == end-1 {
@@ -1449,7 +1448,7 @@ func BenchmarkWriteCompressed(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		p := &TimeSeriesPoint{
 			Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		}
 		history = append(history, p)
 		ps = append(ps, p)
@@ -1535,7 +1534,7 @@ func BenchmarkWriteStandard(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ps = append(ps, &TimeSeriesPoint{
 			Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 
 		if len(ps) >= 300 {

@@ -601,8 +601,7 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 		if options.OpenFileFlag != nil {
 			flag = *options.OpenFileFlag
 		}
-		// skipcq: GSC-G302
-		file, err = os.OpenFile(path, flag, 0666)
+		file, err = os.OpenFile(path, flag, 0666) // skipcq: GSC-G302
 	}
 	if err != nil {
 		return
@@ -973,6 +972,7 @@ func (whisper *Whisper) archiveUpdateMany(archive *archiveInfo, points []*TimeSe
 	return whisper.archiveUpdateManyDataPoints(archive, alignedPoints, true)
 }
 
+// skipcq: RVV-A0005
 func (whisper *Whisper) archiveUpdateManyDataPoints(archive *archiveInfo, alignedPoints []dataPoint, propagate bool) error {
 	intervals, packedBlocks := packSequences(archive, alignedPoints)
 
@@ -1182,13 +1182,11 @@ func (whisper *Whisper) readSeries(start, end int64, archive *archiveInfo) ([]da
 
 func (whisper *Whisper) checkSeriesEmpty(start, end int64, archive *archiveInfo, fromTime, untilTime int) (bool, error) {
 	if start < end {
-		// skipcq: RVV-B0009, CRT-A0001
-		len := end - start
-		return whisper.checkSeriesEmptyAt(start, len, fromTime, untilTime)
+		length := end - start
+		return whisper.checkSeriesEmptyAt(start, length, fromTime, untilTime)
 	}
-	// skipcq: RVV-B0009, CRT-A0001
-	len := archive.End() - start
-	empty, err := whisper.checkSeriesEmptyAt(start, len, fromTime, untilTime)
+	length := archive.End() - start
+	empty, err := whisper.checkSeriesEmptyAt(start, length, fromTime, untilTime)
 	if err != nil || !empty {
 		return empty, err
 	}
@@ -1196,8 +1194,7 @@ func (whisper *Whisper) checkSeriesEmpty(start, end int64, archive *archiveInfo,
 
 }
 
-// skipcq: CRT-A0001
-func (whisper *Whisper) checkSeriesEmptyAt(start, len int64, fromTime, untilTime int) (bool, error) {
+func (whisper *Whisper) checkSeriesEmptyAt(start, length int64, fromTime, untilTime int) (bool, error) {
 	b1 := make([]byte, 4)
 	// Read first point
 	err := whisper.fileReadAt(b1, start)
@@ -1211,7 +1208,7 @@ func (whisper *Whisper) checkSeriesEmptyAt(start, len int64, fromTime, untilTime
 
 	b2 := make([]byte, 4)
 	// Read last point
-	err = whisper.fileReadAt(b2, len-12)
+	err = whisper.fileReadAt(b2, length-12)
 	if err != nil {
 		return false, err
 	}
@@ -1751,11 +1748,15 @@ func (whisper *Whisper) HasMatchingConfigs(rets Retentions, aggr AggregationMeth
 	if whisper.aggregationMethod != aggr {
 		return false
 	}
+	if whisper.xFilesFactor != xff {
+		return false
+	}
 
 	// TODO: support whisper -> cwhisper conversion and vice versa
-	// if whisper.compressed != options.Compressed {
-	// 	return false
-	// }
+	// skipcq: SCC-SA9003
+	if whisper.compressed != options.Compressed {
+		// 	return false
+	}
 
 	return true
 }

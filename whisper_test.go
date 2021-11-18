@@ -25,6 +25,7 @@ func checkBytes(t *testing.T, expected, received []byte) {
 	}
 }
 
+// skipcq: RVV-A0005
 func testParseRetentionDef(t *testing.T, retentionDef string, expectedPrecision, expectedPoints int, hasError bool) {
 	errTpl := fmt.Sprintf("Expected %%v to be %%v but received %%v for retentionDef %v", retentionDef)
 
@@ -47,6 +48,7 @@ func testParseRetentionDef(t *testing.T, retentionDef string, expectedPrecision,
 	}
 }
 
+// skipcq: RVV-B0001
 func TestParseRetentionDef(t *testing.T) {
 	testParseRetentionDef(t, "1s:5m", 1, 300, false)
 	testParseRetentionDef(t, "1m:30m", 60, 30, false)
@@ -390,6 +392,7 @@ func TestFetchEmptyTimeseries(t *testing.T) {
 	tearDown()
 }
 
+// skipcq: RVV-B0001
 func TestCreateUpdateFetch(t *testing.T) {
 	var timeSeries *TimeSeries
 	timeSeries = testCreateUpdateFetch(t, Average, 0.5, 3500, 3500, 1000, 300, 0.5, 0.2)
@@ -411,8 +414,7 @@ func TestCreateUpdateFetch(t *testing.T) {
 
 // Test for a bug in python whisper library: https://github.com/graphite-project/whisper/pull/136
 func TestCreateUpdateFetchOneValue(t *testing.T) {
-	var timeSeries *TimeSeries
-	timeSeries = testCreateUpdateFetch(t, Average, 0.5, 3500, 3500, 1, 300, 0.5, 0.2)
+	timeSeries := testCreateUpdateFetch(t, Average, 0.5, 3500, 3500, 1, 300, 0.5, 0.2)
 	if len(timeSeries.values) > 1 {
 		t.Fatalf("More then one point fetched\n")
 	}
@@ -550,6 +552,7 @@ func printPoints(points []*TimeSeriesPoint) {
 	fmt.Println("]")
 }
 
+// skipcq: RVV-B0001
 func TestCreateUpdateManyFetch(t *testing.T) {
 	var timeSeries *TimeSeries
 
@@ -1087,7 +1090,7 @@ func populateTestFile(w *Whisper, gapn int) error {
 	for _, r := range w.Retentions() {
 		var ps []*TimeSeriesPoint
 		ptime := start.Add(-time.Second * time.Duration(r.MaxRetention()))
-		for i := 0; i <= r.numberOfPoints; i += 1 {
+		for i := 0; i <= r.numberOfPoints; i += gapn {
 			ps = append(ps, &TimeSeriesPoint{
 				Time:  int(ptime.Add(time.Second * time.Duration(i*r.secondsPerPoint)).Unix()),
 				Value: rand.NormFloat64(),
