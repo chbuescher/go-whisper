@@ -14,8 +14,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/rogpeppe/go-internal/lockedfile"
 )
 
 const (
@@ -370,6 +371,8 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 	if options.InMemory {
 		file = newMemFile(path)
 		err = nil
+	} else if options.FLock {
+		file, err = lockedfile.Create(path)
 	} else {
 		file, err = os.Create(path)
 	}
@@ -377,12 +380,6 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 		return nil, err
 	}
 
-	if options.FLock && !options.InMemory {
-		if err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-			file.Close()
-			return nil, err
-		}
-	}
 	if options.PointSize == 0 {
 		options.PointSize = avgCompressedPointSize
 	}
@@ -580,6 +577,12 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 	var file file
 	if options.InMemory {
 		file = newMemFile(path)
+	} else if options.FLock {
+		flag := os.O_RDWR
+		if options.OpenFileFlag != nil {
+			flag = *options.OpenFileFlag
+		}
+		file, err = lockedfile.OpenFile(path, flag, 0666)
 	} else {
 		flag := os.O_RDWR
 		if options.OpenFileFlag != nil {
@@ -597,12 +600,6 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 			file.Close()
 		}
 	}()
-
-	if options.FLock {
-		if err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-			return
-		}
-	}
 
 	whisper = new(Whisper)
 	whisper.file = file
