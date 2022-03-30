@@ -1010,6 +1010,26 @@ func TestUpdateConfig(t *testing.T) {
 			checkRanges:    [][2]time.Duration{{-3600 * 24 * 20, 0}, {-3600 * 24 * 365 * 10, 0}},
 		},
 
+		{
+			oldRets:        "1m:30d,1h:1y,1d:10y",
+			newRets:        "1m:2d,1h:1y,1d:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600*24*2 + 120, 0}, {-3600*24*365*1 + 3600, 0}, {-3600*24*365*10 + 86400, 0}},
+		},
+
+		{
+			oldRets:        "1m:30d,30m:184d,1h:1y,1d:10y",
+			newRets:        "1m:30d,1h:1y,1d:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600*24*30 + 120, 0}, {-3600*24*365*1 + 86400, 0}, {-3600*24*365*10 + 86400, 0}},
+		},
+
 		// no retetion changes
 		{
 			oldRets:        "1m:30d,1h:10y",
