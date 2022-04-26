@@ -18,7 +18,7 @@ import (
 )
 
 func init() {
-	if err := os.MkdirAll("tmp", 0755); err != nil {
+	if err := os.MkdirAll("tmp", 0755); err != nil { // skipcq: GSC-G301
 		panic(err)
 	}
 }
