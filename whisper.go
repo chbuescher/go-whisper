@@ -4,6 +4,7 @@
 package whisper
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -161,6 +162,8 @@ type Whisper struct {
 
 	// TODO: improve
 	NonFatalErrors []error
+
+	DiscardedPoints uint32
 }
 
 /*
@@ -588,6 +591,7 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 		if options.OpenFileFlag != nil {
 			flag = *options.OpenFileFlag
 		}
+		// skipcq: GSC-G302
 		file, err = os.OpenFile(path, flag, 0666)
 	}
 	if err != nil {
@@ -608,7 +612,7 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 	b := make([]byte, len(compressedMagicString))
 	if _, err := whisper.file.Read(b); err != nil {
 		return nil, fmt.Errorf("Unable to read magic string: %s", err)
-	} else if string(b) == string(compressedMagicString) {
+	} else if bytes.Equal(b, compressedMagicString) {
 		whisper.compressed = true
 	} else if _, err := whisper.file.Seek(0, 0); err != nil {
 		return nil, fmt.Errorf("Unable to reset file offset: %s", err)
@@ -703,6 +707,7 @@ func (whisper *Whisper) writeHeader() (err error) {
 	return err
 }
 
+// skipcq: SCC-ST1006, RVV-B0013
 func (whisper *Whisper) crc32Offset() int {
 	const crc32Size = IntSize
 	return len(compressedMagicString) + VersionSize + CompressedMetadataSize - crc32Size - FreeCompressedMetadataSize
@@ -887,10 +892,17 @@ func (whisper *Whisper) UpdateManyForArchive(points []*TimeSeriesPoint, targetRe
 	sort.Stable(timeSeriesPointsNewestFirst{points})
 
 	now := int(Now().Unix()) // TODO: danger of 2030 something overflow
+	var oldDiscardedPoints uint32
 
 	var currentPoints []*TimeSeriesPoint
 	for i := 0; i < len(whisper.archives); i++ {
 		archive := whisper.archives[i]
+
+		// keep old discard counter
+		if whisper.compressed && archive.stats.discard.oldInterval > 0 {
+			oldDiscardedPoints += archive.stats.discard.oldInterval
+		}
+
 		if targetRetention != -1 && targetRetention != archive.MaxRetention() {
 			continue
 		}
@@ -926,7 +938,6 @@ func (whisper *Whisper) UpdateManyForArchive(points []*TimeSeriesPoint, targetRe
 		if err != nil {
 			return
 		}
-
 		if len(points) == 0 { // nothing left to do
 			break
 		}
@@ -939,6 +950,15 @@ func (whisper *Whisper) UpdateManyForArchive(points []*TimeSeriesPoint, targetRe
 
 		if err := whisper.extendIfNeeded(); err != nil {
 			return err
+		}
+
+		// update DiscardedPoints counter starting from last archive
+		// to not overflow uint32
+		for i := len(whisper.archives) - 1; i >= 0; i-- {
+			a := whisper.archives[i].stats.discard.oldInterval
+			if a > 0 {
+				whisper.DiscardedPoints += a - oldDiscardedPoints
+			}
 		}
 	}
 
@@ -1150,9 +1170,11 @@ func (whisper *Whisper) readSeries(start, end int64, archive *archiveInfo) ([]da
 
 func (whisper *Whisper) checkSeriesEmpty(start, end int64, archive *archiveInfo, fromTime, untilTime int) (bool, error) {
 	if start < end {
+		// skipcq: RVV-B0009, CRT-A0001
 		len := end - start
 		return whisper.checkSeriesEmptyAt(start, len, fromTime, untilTime)
 	}
+	// skipcq: RVV-B0009, CRT-A0001
 	len := archive.End() - start
 	empty, err := whisper.checkSeriesEmptyAt(start, len, fromTime, untilTime)
 	if err != nil || !empty {
@@ -1162,6 +1184,7 @@ func (whisper *Whisper) checkSeriesEmpty(start, end int64, archive *archiveInfo,
 
 }
 
+// skipcq: CRT-A0001
 func (whisper *Whisper) checkSeriesEmptyAt(start, len int64, fromTime, untilTime int) (bool, error) {
 	b1 := make([]byte, 4)
 	// Read first point
