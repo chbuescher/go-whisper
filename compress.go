@@ -477,23 +477,41 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 	bufferUnitPointsCount := archive.next.secondsPerPoint / archive.secondsPerPoint
 	for aindex := 0; aindex < len(alignedPoints); {
 		dp := alignedPoints[aindex]
-		bpBaseInterval := archive.AggregateInterval(dp.interval)
+		dpBaseInterval := archive.AggregateInterval(dp.interval)
 
 		// NOTE: current implementation expects data points to be monotonically
 		// increasing in time
-		if minInterval != 0 && bpBaseInterval < minInterval {
+		if minInterval != 0 && dpBaseInterval < minInterval { // TODO: check against cblock pn1.interval?
 			archive.stats.discard.oldInterval++
 			aindex++
 			continue
 		}
 
-		// check if buffer is full
-		if baseIntervalsPerUnit[currentUnit] == 0 || baseIntervalsPerUnit[currentUnit] == bpBaseInterval {
+		// Tolerate out of order data handling within the current buffer.
+		targetUnit := -1
+		for i, unitInterval := range baseIntervalsPerUnit {
+			if dpBaseInterval == unitInterval {
+				targetUnit = i
+				break
+			}
+		}
+		if targetUnit != -1 {
 			aindex++
-			baseIntervalsPerUnit[currentUnit] = bpBaseInterval
 
 			// TODO: not efficient if many data points are being written in one call
-			offset := currentUnit*bufferUnitPointsCount + (dp.interval-bpBaseInterval)/archive.secondsPerPoint
+			offset := targetUnit*bufferUnitPointsCount + (dp.interval-dpBaseInterval)/archive.secondsPerPoint
+			copy(archive.buffer[offset*PointSize:], dp.Bytes())
+
+			continue
+		}
+
+		// check if buffer is full
+		if baseIntervalsPerUnit[currentUnit] == 0 || baseIntervalsPerUnit[currentUnit] == dpBaseInterval {
+			aindex++
+			baseIntervalsPerUnit[currentUnit] = dpBaseInterval
+
+			// TODO: not efficient if many data points are being written in one call
+			offset := currentUnit*bufferUnitPointsCount + (dp.interval-dpBaseInterval)/archive.secondsPerPoint
 			copy(archive.buffer[offset*PointSize:], dp.Bytes())
 
 			continue
@@ -880,7 +898,7 @@ func (a *archiveInfo) AppendPointsToBlock(buf []byte, ps []dataPoint) (written i
 	for i, p := range ps {
 		if p.interval == 0 {
 			continue
-		} else if p.interval < a.cblock.pn1.interval {
+		} else if p.interval <= a.cblock.pn1.interval {
 			a.stats.discard.oldInterval++
 			continue
 		}

@@ -86,7 +86,7 @@ func TestBlockReadWrite1(t *testing.T) {
 			input = append(input, dataPoint{interval: next(1), value: 1})
 			input = append(input, dataPoint{interval: next(1), value: 1})
 			for i := 0; i < 200; i++ {
-				input = append(input, dataPoint{interval: next(rand.Intn(10)), value: rand.NormFloat64()}) // skipcq: GSC-G404
+				input = append(input, dataPoint{interval: next(rand.Intn(10) + 1), value: rand.NormFloat64()}) // skipcq: GSC-G404
 			}
 		}
 
@@ -661,6 +661,127 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			}
 			t.Logf("compression ratio %s: %.2f%%\n", input.name, float64(cmp.Size()*100)/float64(std.Size()))
 		})
+	}
+}
+
+func TestCompressedWhisperBufferOOOWrite(t *testing.T) {
+	fpath := "tmp/cwhisper_buffer_ooo_write.wsp"
+	os.Remove(fpath)
+
+	whisper, err := CreateWithOptions(
+		fpath,
+		MustParseRetentionDefs("1m:15d,30m:2y"),
+		Sum,
+		0,
+		&Options{Compressed: true, PointsPerBlock: 7200},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := 1544478230
+	nowTs := start
+	Now = func() time.Time { return time.Unix(int64(nowTs), 0) }
+	defer func() { Now = func() time.Time { return time.Now() } }()
+
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs - 1800 - 300, Value: 666},
+		{Time: nowTs - 1800 - 240, Value: 666},
+		{Time: nowTs - 1800 - 180, Value: 666},
+		{Time: nowTs - 1800 - 120, Value: 666},
+		{Time: nowTs - 1800 - 60, Value: 666},
+		{Time: nowTs - 1800 - 60 + 1020, Value: 666},
+
+		{Time: nowTs - 300, Value: 333},
+		{Time: nowTs - 240, Value: 333},
+		{Time: nowTs - 180, Value: 333},
+		{Time: nowTs - 120, Value: 333},
+		{Time: nowTs - 60, Value: 333},
+	}); err != nil {
+		t.Error(err)
+	}
+
+	nowTs += 3600
+
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs - 300, Value: 222},
+		{Time: nowTs - 240, Value: 222},
+		{Time: nowTs - 180, Value: 222},
+		{Time: nowTs - 120, Value: 222},
+		{Time: nowTs - 60, Value: 222},
+	}); err != nil {
+		t.Error(err)
+	}
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs + 1800 - 300, Value: 777},
+		{Time: nowTs + 1800 - 240, Value: 777},
+		{Time: nowTs + 1800 - 180, Value: 777},
+		{Time: nowTs + 1800 - 120, Value: 777},
+		{Time: nowTs + 1800 - 60, Value: 777},
+	}); err != nil {
+		t.Error(err)
+	}
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs - 400, Value: 111},
+		{Time: nowTs - 340, Value: 111},
+		{Time: nowTs - 280, Value: 111},
+		{Time: nowTs - 120, Value: 111},
+		{Time: nowTs - 60, Value: 111},
+	}); err != nil {
+		t.Error(err)
+	}
+
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs + 1800 - 400, Value: 778},
+		{Time: nowTs + 1800 - 340, Value: 778},
+		{Time: nowTs + 1800 - 280, Value: 778},
+		{Time: nowTs + 1800 - 120, Value: 778},
+		{Time: nowTs + 1800 - 60, Value: 778},
+	}); err != nil {
+		t.Error(err)
+	}
+
+	nowTs += 3600
+
+	// flushing buffer value
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs, Value: 000},
+		{Time: nowTs + 1800, Value: 000},
+	}); err != nil {
+		t.Error(err)
+	}
+
+	whisper.Close()
+
+	whisper, err = OpenWithOptions(fpath, &Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ts, err := whisper.Fetch(start-3600, start+7200)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var points []TimeSeriesPoint
+	for _, p := range ts.Points() {
+		if !math.IsNaN(p.Value) {
+			points = append(points, p)
+		}
+	}
+
+	if diff := cmp.Diff(points, []TimeSeriesPoint{
+		{Time: 1544476080, Value: 666}, {Time: 1544476140, Value: 666}, {Time: 1544476200, Value: 666},
+		{Time: 1544476260, Value: 666}, {Time: 1544476320, Value: 666}, {Time: 1544477340, Value: 666},
+		{Time: 1544477880, Value: 333}, {Time: 1544477940, Value: 333}, {Time: 1544478000, Value: 333},
+		{Time: 1544478060, Value: 333}, {Time: 1544478120, Value: 333},
+		{Time: 1544481420, Value: 111}, {Time: 1544481480, Value: 111}, {Time: 1544481540, Value: 111},
+		{Time: 1544481600, Value: 222}, {Time: 1544481660, Value: 111}, {Time: 1544481720, Value: 111},
+		{Time: 1544483220, Value: 778}, {Time: 1544483280, Value: 778}, {Time: 1544483340, Value: 778},
+		{Time: 1544483400, Value: 777}, {Time: 1544483460, Value: 778}, {Time: 1544483520, Value: 778},
+		{Time: 1544485380},
+	}, cmpopts.EquateNaNs()); diff != "" {
+		t.Error(diff)
 	}
 }
 
