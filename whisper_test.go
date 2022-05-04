@@ -725,11 +725,17 @@ func TestUpdateManyWithEqualTimestamp(t *testing.T) {
 
 	for i := 0; i < 100; i++ {
 		if i%2 == 0 {
-			points = append(points, &TimeSeriesPoint{now, float64(i)})
-			points = append(points, &TimeSeriesPoint{now - 1, float64(100 - i)})
+			points = append(
+				points,
+				&TimeSeriesPoint{now, float64(i)},
+				&TimeSeriesPoint{now - 1, float64(100 - i)},
+			)
 		} else {
-			points = append(points, &TimeSeriesPoint{now, float64(100 - i)})
-			points = append(points, &TimeSeriesPoint{now - 1, float64(i)})
+			points = append(
+				points,
+				&TimeSeriesPoint{now, float64(100 - i)},
+				&TimeSeriesPoint{now - 1, float64(i)},
+			)
 		}
 	}
 

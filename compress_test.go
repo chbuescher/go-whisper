@@ -80,14 +80,15 @@ func TestBlockReadWrite1(t *testing.T) {
 		}
 
 		var input []dataPoint
-		{
-			rand.Seed(time.Now().Unix()) // skipcq: GSC-G404
-			input = append(input, dataPoint{interval: next(1), value: 1})
-			input = append(input, dataPoint{interval: next(1), value: 1})
-			input = append(input, dataPoint{interval: next(1), value: 1})
-			for i := 0; i < 200; i++ {
-				input = append(input, dataPoint{interval: next(rand.Intn(10) + 1), value: rand.NormFloat64()}) // skipcq: GSC-G404
-			}
+		rand.Seed(time.Now().Unix()) // skipcq: GSC-G404
+		input = append(
+			input,
+			dataPoint{interval: next(1), value: 1},
+			dataPoint{interval: next(1), value: 1},
+			dataPoint{interval: next(1), value: 1},
+		)
+		for i := 0; i < 200; i++ {
+			input = append(input, dataPoint{interval: next(rand.Intn(10) + 1), value: rand.NormFloat64()}) // skipcq: GSC-G404
 		}
 
 		buf := make([]byte, acv.blockSize)
@@ -314,7 +315,7 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 
 	nowTs := 1544478230
 	Now = func() time.Time { return time.Unix(int64(nowTs), 0) }
-	defer func() { Now = func() time.Time { return time.Now() } }()
+	defer func() { Now = time.Now }()
 
 	input := []*TimeSeriesPoint{
 		{Time: nowTs - 300, Value: 666},
@@ -540,7 +541,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			var total = 60*60*24*365*2 + 37
 			var start = now.Add(time.Second * time.Duration(total) * -1)
 			Now = func() time.Time { return start }
-			defer func() { Now = func() time.Time { return time.Now() } }()
+			defer func() { Now = time.Now }()
 
 			// var psArr [][]*TimeSeriesPoint
 			var ps []*TimeSeriesPoint
@@ -682,7 +683,7 @@ func TestCompressedWhisperBufferOOOWrite(t *testing.T) {
 	start := 1544478230
 	nowTs := start
 	Now = func() time.Time { return time.Unix(int64(nowTs), 0) }
-	defer func() { Now = func() time.Time { return time.Now() } }()
+	defer func() { Now = time.Now }()
 
 	if err := whisper.UpdateMany([]*TimeSeriesPoint{
 		{Time: nowTs - 1800 - 300, Value: 666},
@@ -939,7 +940,7 @@ func TestRandomReadWrite(t *testing.T) {
 	}
 
 	Now = func() time.Time { return time.Unix(int64(ps[len(ps)-1].Time), 0) }
-	defer func() { Now = func() time.Time { return time.Now() } }()
+	defer func() { Now = time.Now }()
 
 	ts, err := cwhisper.Fetch(int(start.Unix()), int(ptime.Unix()))
 	if err != nil {
@@ -1249,7 +1250,7 @@ func TestFillCompressedMix(t *testing.T) {
 	var now = start
 	Now = func() time.Time { return time.Unix(int64(now), 0) }
 	nowNext := func() time.Time { now++; return Now() }
-	defer func() { Now = func() time.Time { return time.Now() } }()
+	defer func() { Now = time.Now }()
 
 	limit = 300 + rand.Intn(100) // skipcq: GSC-G404
 	for i, end := 0, 60*60*24*80; i < end; i++ {
@@ -1409,7 +1410,7 @@ func TestFetchCompressedMix(t *testing.T) {
 	start := 1544478600
 	now := start
 	Now = func() time.Time { return time.Unix(int64(now), 0) }
-	defer func() { Now = func() time.Time { return time.Now() } }()
+	defer func() { Now = time.Now }()
 
 	for i, total := 0, 4*60*60; i < total; i++ {
 		points = append(points, &TimeSeriesPoint{

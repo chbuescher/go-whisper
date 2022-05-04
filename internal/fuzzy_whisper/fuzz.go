@@ -7,6 +7,9 @@ import (
 	whisper "github.com/go-graphite/go-whisper"
 )
 
+// TODO: not implemented yet?
+//
+// skipcq: RVV-B0012
 func Fuzz(data []byte) int {
 	f, err := ioutil.TempFile("cwhisper", "*")
 	if err != nil {
