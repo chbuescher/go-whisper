@@ -18,7 +18,10 @@ import (
 )
 
 func init() {
-	if err := os.MkdirAll("tmp", 0755); err != nil { // skipcq: GSC-G301
+	log.SetFlags(log.Lshortfile)
+	rand.Seed(time.Now().UnixNano()) // skipcq: GSC-G404
+
+	if err := os.MkdirAll("tmp", 0750); err != nil {
 		panic(err)
 	}
 }
@@ -58,11 +61,6 @@ func TestBitsReadWrite(t *testing.T) {
 	}
 }
 
-func init() {
-	log.SetFlags(log.Lshortfile)
-	rand.Seed(time.Now().UnixNano())
-}
-
 func TestBlockReadWrite1(t *testing.T) {
 	for i := 0; i < 1; i++ {
 		var acv archiveInfo
@@ -82,14 +80,15 @@ func TestBlockReadWrite1(t *testing.T) {
 		}
 
 		var input []dataPoint
-		{
-			rand.Seed(time.Now().Unix())
-			input = append(input, dataPoint{interval: next(1), value: 1})
-			input = append(input, dataPoint{interval: next(1), value: 1})
-			input = append(input, dataPoint{interval: next(1), value: 1})
-			for i := 0; i < 200; i++ {
-				input = append(input, dataPoint{interval: next(rand.Intn(10)), value: rand.NormFloat64()}) // skipcq: GSC-G404
-			}
+		rand.Seed(time.Now().Unix()) // skipcq: GSC-G404
+		input = append(
+			input,
+			dataPoint{interval: next(1), value: 1},
+			dataPoint{interval: next(1), value: 1},
+			dataPoint{interval: next(1), value: 1},
+		)
+		for i := 0; i < 200; i++ {
+			input = append(input, dataPoint{interval: next(rand.Intn(10) + 1), value: rand.NormFloat64()}) // skipcq: GSC-G404
 		}
 
 		buf := make([]byte, acv.blockSize)
@@ -202,8 +201,8 @@ func TestCompressedWhisperReadWrite1(t *testing.T) {
 	if err := whisper.UpdateMany([]*TimeSeriesPoint{&outOfOrderDataPoint}); err != nil {
 		t.Error(err)
 	}
-	if got, want := whisper.DiscardedPoints, uint32(1); got != want {
-		t.Errorf("whisper.DiscardedPoints = %d; want %d", got, want)
+	if got, want := whisper.GetDiscardedPointsSinceOpen(), uint32(1); got != want {
+		t.Errorf("whisper.GetDiscardedPointsSinceOpen() = %d; want %d", got, want)
 	}
 
 	whisper.Close()
@@ -316,7 +315,7 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 
 	nowTs := 1544478230
 	Now = func() time.Time { return time.Unix(int64(nowTs), 0) }
-	defer func() { Now = func() time.Time { return time.Now() } }()
+	defer func() { Now = time.Now }()
 
 	input := []*TimeSeriesPoint{
 		{Time: nowTs - 300, Value: 666},
@@ -424,7 +423,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			fullTest: func() bool { return true },
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
 				return &TimeSeriesPoint{
-					Value: rand.NormFloat64(),
+					Value: rand.NormFloat64(),                                                          // skipcq: GSC-G404
 					Time:  int(prevTime.Add(time.Duration(rand.Intn(3600*24)+1) * time.Second).Unix()), // skipcq: GSC-G404
 				}
 			},
@@ -445,8 +444,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			fullTest:  func() bool { return true },
 			randLimit: func() int { return 300 },
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
-				return &TimeSeriesPoint{Value: 2000.0 + float64(rand.Intn(1000)), // skipcq: GSC-G404
-					Time: int(prevTime.Add(time.Second * 60).Unix())} // skipcq: GSC-G404
+				return &TimeSeriesPoint{Value: 2000.0 + float64(rand.Intn(1000)), Time: int(prevTime.Add(time.Second * 60).Unix())} // skipcq: GSC-G404
 			},
 		},
 
@@ -456,7 +454,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			fullTest: func() bool { return *fullTest3 },
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
 				return &TimeSeriesPoint{
-					Value: rand.NormFloat64(),
+					Value: rand.NormFloat64(), // skipcq: GSC-G404
 					Time:  int(prevTime.Add(time.Second).Unix()),
 				}
 			},
@@ -481,7 +479,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 		},
 	}
 
-	os.MkdirAll("tmp", 0600)
+	os.MkdirAll("tmp", 0750)
 	inMemory := true
 	for i := range inputs {
 		input := inputs[i]
@@ -543,7 +541,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			var total = 60*60*24*365*2 + 37
 			var start = now.Add(time.Second * time.Duration(total) * -1)
 			Now = func() time.Time { return start }
-			defer func() { Now = func() time.Time { return time.Now() } }()
+			defer func() { Now = time.Now }()
 
 			// var psArr [][]*TimeSeriesPoint
 			var ps []*TimeSeriesPoint
@@ -667,6 +665,127 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	}
 }
 
+func TestCompressedWhisperBufferOOOWrite(t *testing.T) {
+	fpath := "tmp/cwhisper_buffer_ooo_write.wsp"
+	os.Remove(fpath)
+
+	whisper, err := CreateWithOptions(
+		fpath,
+		MustParseRetentionDefs("1m:15d,30m:2y"),
+		Sum,
+		0,
+		&Options{Compressed: true, PointsPerBlock: 7200},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := 1544478230
+	nowTs := start
+	Now = func() time.Time { return time.Unix(int64(nowTs), 0) }
+	defer func() { Now = time.Now }()
+
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs - 1800 - 300, Value: 666},
+		{Time: nowTs - 1800 - 240, Value: 666},
+		{Time: nowTs - 1800 - 180, Value: 666},
+		{Time: nowTs - 1800 - 120, Value: 666},
+		{Time: nowTs - 1800 - 60, Value: 666},
+		{Time: nowTs - 1800 - 60 + 1020, Value: 666},
+
+		{Time: nowTs - 300, Value: 333},
+		{Time: nowTs - 240, Value: 333},
+		{Time: nowTs - 180, Value: 333},
+		{Time: nowTs - 120, Value: 333},
+		{Time: nowTs - 60, Value: 333},
+	}); err != nil {
+		t.Error(err)
+	}
+
+	nowTs += 3600
+
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs - 300, Value: 222},
+		{Time: nowTs - 240, Value: 222},
+		{Time: nowTs - 180, Value: 222},
+		{Time: nowTs - 120, Value: 222},
+		{Time: nowTs - 60, Value: 222},
+	}); err != nil {
+		t.Error(err)
+	}
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs + 1800 - 300, Value: 777},
+		{Time: nowTs + 1800 - 240, Value: 777},
+		{Time: nowTs + 1800 - 180, Value: 777},
+		{Time: nowTs + 1800 - 120, Value: 777},
+		{Time: nowTs + 1800 - 60, Value: 777},
+	}); err != nil {
+		t.Error(err)
+	}
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs - 400, Value: 111},
+		{Time: nowTs - 340, Value: 111},
+		{Time: nowTs - 280, Value: 111},
+		{Time: nowTs - 120, Value: 111},
+		{Time: nowTs - 60, Value: 111},
+	}); err != nil {
+		t.Error(err)
+	}
+
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs + 1800 - 400, Value: 778},
+		{Time: nowTs + 1800 - 340, Value: 778},
+		{Time: nowTs + 1800 - 280, Value: 778},
+		{Time: nowTs + 1800 - 120, Value: 778},
+		{Time: nowTs + 1800 - 60, Value: 778},
+	}); err != nil {
+		t.Error(err)
+	}
+
+	nowTs += 3600
+
+	// flushing buffer value
+	if err := whisper.UpdateMany([]*TimeSeriesPoint{
+		{Time: nowTs, Value: 000},
+		{Time: nowTs + 1800, Value: 000},
+	}); err != nil {
+		t.Error(err)
+	}
+
+	whisper.Close()
+
+	whisper, err = OpenWithOptions(fpath, &Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ts, err := whisper.Fetch(start-3600, start+7200)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var points []TimeSeriesPoint
+	for _, p := range ts.Points() {
+		if !math.IsNaN(p.Value) {
+			points = append(points, p)
+		}
+	}
+
+	if diff := cmp.Diff(points, []TimeSeriesPoint{
+		{Time: 1544476080, Value: 666}, {Time: 1544476140, Value: 666}, {Time: 1544476200, Value: 666},
+		{Time: 1544476260, Value: 666}, {Time: 1544476320, Value: 666}, {Time: 1544477340, Value: 666},
+		{Time: 1544477880, Value: 333}, {Time: 1544477940, Value: 333}, {Time: 1544478000, Value: 333},
+		{Time: 1544478060, Value: 333}, {Time: 1544478120, Value: 333},
+		{Time: 1544481420, Value: 111}, {Time: 1544481480, Value: 111}, {Time: 1544481540, Value: 111},
+		{Time: 1544481600, Value: 222}, {Time: 1544481660, Value: 111}, {Time: 1544481720, Value: 111},
+		{Time: 1544483220, Value: 778}, {Time: 1544483280, Value: 778}, {Time: 1544483340, Value: 778},
+		{Time: 1544483400, Value: 777}, {Time: 1544483460, Value: 778}, {Time: 1544483520, Value: 778},
+		{Time: 1544485380},
+	}, cmpopts.EquateNaNs()); diff != "" {
+		t.Error(diff)
+	}
+}
+
 func TestCompressedWhisperSingleRetentionOutOfOrderWrite(t *testing.T) {
 	fpath := "tmp/test_single_retention_ooo.cwsp"
 	os.Remove(fpath)
@@ -738,8 +857,8 @@ func TestCompressTo(t *testing.T) {
 				// Time: int(start.Add(time.Duration(i) * time.Second).Unix()),
 				Time: int(start.Unix()),
 				// Value: float64(i),
-				// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
-				// Value: rand.NormFloat64(),
+				// Value: 2000.0 + float64(rand.Intn(100000))/100.0, // skipcq: GSC-G404
+				// Value: rand.NormFloat64(), // skipcq: GSC-G404
 				Value: float64(rand.Intn(100000)), // skipcq: GSC-G404
 			})
 		}
@@ -807,9 +926,9 @@ func TestRandomReadWrite(t *testing.T) {
 		}
 		ts := &TimeSeriesPoint{
 			Time:  int(ptime.Unix()),
-			Value: rand.NormFloat64(),
-			// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
-			// Value: float64(rand.Intn(100000)),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
+			// Value: 2000.0 + float64(rand.Intn(100000))/100.0, // skipcq: GSC-G404
+			// Value: float64(rand.Intn(100000)), // skipcq: GSC-G404
 		}
 		ps = append(ps, ts)
 		vals = append(vals, ts.Value)
@@ -821,7 +940,7 @@ func TestRandomReadWrite(t *testing.T) {
 	}
 
 	Now = func() time.Time { return time.Unix(int64(ps[len(ps)-1].Time), 0) }
-	defer func() { Now = func() time.Time { return time.Now() } }()
+	defer func() { Now = time.Now }()
 
 	ts, err := cwhisper.Fetch(int(start.Unix()), int(ptime.Unix()))
 	if err != nil {
@@ -875,7 +994,7 @@ func TestFillCompressed(t *testing.T) {
 	for i := 0; i < 2*365*24-28*24; i++ {
 		points = append(points, &TimeSeriesPoint{
 			Time:  int(twoYearsAgo.Add(time.Hour * time.Duration(i)).Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 	}
 	if err := standard.UpdateMany(points); err != nil {
@@ -887,7 +1006,7 @@ func TestFillCompressed(t *testing.T) {
 	for i := 0; i < 28*24*60-2*24*60; i++ {
 		points = append(points, &TimeSeriesPoint{
 			Time:  int(oneMonthAgo.Add(time.Minute * time.Duration(i)).Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 	}
 	if err := standard.UpdateMany(points); err != nil {
@@ -913,7 +1032,7 @@ func TestFillCompressed(t *testing.T) {
 	for i := 0; i < 60*60*24*2; i++ {
 		points = append(points, &TimeSeriesPoint{
 			Time:  int(twoDaysAgo.Add(time.Second * time.Duration(i)).Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 	}
 	if err := compressed.UpdateMany(points); err != nil {
@@ -935,45 +1054,56 @@ func TestFillCompressed(t *testing.T) {
 		t.Error(err)
 	}
 
-	compare := func(w1, w2 *Whisper, from, until int) {
-		valsc, err := w1.Fetch(from, until)
-		if err != nil {
-			t.Error(err)
-		}
-		valss, err := w2.Fetch(from, until)
-		if err != nil {
-			t.Error(err)
-		}
-		var diff, same int
-		for i := 0; i < len(valsc.values); i++ {
-			vc := valsc.values[i]
-			vs := valss.values[i]
-			if math.IsNaN(vc) && math.IsNaN(vs) {
-				same++
-			} else if vc != vs {
-				t.Errorf("%d/%d %d: %v != %v\n", i, len(valsc.values), valsc.fromTime+i*valsc.step, vc, vs)
-				diff++
-			} else {
-				same++
-			}
-		}
-		if diff > 0 {
-			t.Errorf("diff = %d", diff)
-			t.Errorf("same = %d", same)
-		}
-	}
-
 	t.Log("comparing 2 years archive")
-	compare(compressed, standard, int(twoYearsAgo.Unix()), int(Now().Add(time.Hour*24*-28).Unix()))
+	compareWhisperFiles(t, compressed, standard, int(twoYearsAgo.Unix()), int(Now().Add(time.Hour*24*-28).Unix()))
 	t.Log("comparing 1 month archive")
-	compare(compressed, standard, int(oneMonthAgo.Add(time.Hour).Unix()), int(Now().Add(time.Hour*24*-2-time.Hour).Unix()))
+	compareWhisperFiles(t, compressed, standard, int(oneMonthAgo.Add(time.Hour).Unix()), int(Now().Add(time.Hour*24*-2-time.Hour).Unix()))
 
 	oldCompressed, err := OpenWithOptions(fpath+".original.cwsp", &Options{})
 	if err != nil {
 		t.Error(err)
 	}
 	t.Log("comparing 2 days archive")
-	compare(compressed, oldCompressed, int(Now().Add(time.Hour*24*-2+time.Hour).Unix()), int(Now().Unix()))
+	compareWhisperFiles(t, compressed, oldCompressed, int(Now().Add(time.Hour*24*-2+time.Hour).Unix()), int(Now().Unix()))
+}
+
+func compareWhisperFiles(t *testing.T, w1, w2 *Whisper, from, until int) {
+	vals1, err := w1.Fetch(from, until)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	vals2, err := w2.Fetch(from, until)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	var diff, same, nan int
+	for i := 0; i < len(vals1.values); i++ {
+		vc := vals1.values[i]
+		vs := vals2.values[i]
+		if math.IsNaN(vc) && math.IsNaN(vs) {
+			same++
+			nan++
+		} else if vc != vs {
+			t.Errorf("%d/%d %d (%s): %v != %v\n", i, len(vals1.values), vals1.fromTime+i*vals1.step, time.Unix(int64(vals1.fromTime+i*vals1.step), 0), vc, vs)
+			diff++
+		} else {
+			same++
+		}
+	}
+	fromt, untilt := time.Unix(int64(from), 0), time.Unix(int64(until), 0)
+	t.Logf("from %s until %s %s", fromt, untilt, untilt.Sub(fromt))
+	if diff > 0 {
+		t.Errorf("diff = %d", diff)
+		t.Errorf("same = %d", same)
+		t.Errorf("nan = %d", nan)
+	} else {
+		t.Logf("diff = %d", diff)
+		t.Logf("same = %d", same)
+		t.Logf("nan = %d", nan)
+	}
 }
 
 func TestSanitizeAvgCompressedPointSizeOnCreate(t *testing.T) {
@@ -1070,11 +1200,11 @@ func TestEstimatePointSize(t *testing.T) {
 	// 	var ds []dataPoint
 	// 	var start = 1543449600
 	// 	for j := 0; j < i; j++ {
-	// 		ds = append(ds, dataPoint{interval: start, value: rand.NormFloat64()})
+	// 		ds = append(ds, dataPoint{interval: start, value: rand.NormFloat64()}) // skipcq: GSC-G404
 	// 		// ds = append(ds, dataPoint{interval: start, value: 10})
 	//
 	// 		start += 1
-	// 		// start += rand.Int()
+	// 		// start += rand.Int() // skipcq: GSC-G404
 	// 	}
 	// 	size := estimatePointSize(ds, &Retention{secondsPerPoint: 10, numberOfPoints: 17280}, DefaultPointsPerBlock)
 	// 	fmt.Printf("%d: %f\n", i, size)
@@ -1120,13 +1250,13 @@ func TestFillCompressedMix(t *testing.T) {
 	var now = start
 	Now = func() time.Time { return time.Unix(int64(now), 0) }
 	nowNext := func() time.Time { now++; return Now() }
-	defer func() { Now = func() time.Time { return time.Now() } }()
+	defer func() { Now = time.Now }()
 
 	limit = 300 + rand.Intn(100) // skipcq: GSC-G404
 	for i, end := 0, 60*60*24*80; i < end; i++ {
 		points = append(points, &TimeSeriesPoint{
 			Time:  int(nowNext().Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 
 		if len(points) > limit || i == end-1 {
@@ -1169,7 +1299,7 @@ func TestFillCompressedMix(t *testing.T) {
 	for i, end := 0, 60*60*24*2; i < end; i++ {
 		points = append(points, &TimeSeriesPoint{
 			Time:  int(nowNext().Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 
 		if len(points) > limit || i == end-1 {
@@ -1199,6 +1329,7 @@ func TestFillCompressedMix(t *testing.T) {
 		t.Error(err)
 	}
 
+	// TODO: merge with compareWhisperFiles
 	compare := func(w1, w2 *Whisper, from, until int) {
 		valsc, err := w1.Fetch(from, until)
 		if err != nil {
@@ -1279,7 +1410,7 @@ func TestFetchCompressedMix(t *testing.T) {
 	start := 1544478600
 	now := start
 	Now = func() time.Time { return time.Unix(int64(now), 0) }
-	defer func() { Now = func() time.Time { return time.Now() } }()
+	defer func() { Now = time.Now }()
 
 	for i, total := 0, 4*60*60; i < total; i++ {
 		points = append(points, &TimeSeriesPoint{
@@ -1439,7 +1570,7 @@ func BenchmarkWriteCompressed(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		p := &TimeSeriesPoint{
 			Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		}
 		history = append(history, p)
 		ps = append(ps, p)
@@ -1525,7 +1656,7 @@ func BenchmarkWriteStandard(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ps = append(ps, &TimeSeriesPoint{
 			Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
-			Value: rand.NormFloat64(),
+			Value: rand.NormFloat64(), // skipcq: GSC-G404
 		})
 
 		if len(ps) >= 300 {

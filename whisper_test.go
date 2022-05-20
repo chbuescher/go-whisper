@@ -1,11 +1,15 @@
 package whisper
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"math"
+	"math/rand"
 	"os"
+	"os/exec"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,6 +25,7 @@ func checkBytes(t *testing.T, expected, received []byte) {
 	}
 }
 
+// skipcq: RVV-A0005
 func testParseRetentionDef(t *testing.T, retentionDef string, expectedPrecision, expectedPoints int, hasError bool) {
 	errTpl := fmt.Sprintf("Expected %%v to be %%v but received %%v for retentionDef %v", retentionDef)
 
@@ -43,6 +48,7 @@ func testParseRetentionDef(t *testing.T, retentionDef string, expectedPrecision,
 	}
 }
 
+// skipcq: RVV-B0001
 func TestParseRetentionDef(t *testing.T) {
 	testParseRetentionDef(t, "1s:5m", 1, 300, false)
 	testParseRetentionDef(t, "1m:30m", 60, 30, false)
@@ -386,6 +392,7 @@ func TestFetchEmptyTimeseries(t *testing.T) {
 	tearDown()
 }
 
+// skipcq: RVV-B0001
 func TestCreateUpdateFetch(t *testing.T) {
 	var timeSeries *TimeSeries
 	timeSeries = testCreateUpdateFetch(t, Average, 0.5, 3500, 3500, 1000, 300, 0.5, 0.2)
@@ -407,8 +414,7 @@ func TestCreateUpdateFetch(t *testing.T) {
 
 // Test for a bug in python whisper library: https://github.com/graphite-project/whisper/pull/136
 func TestCreateUpdateFetchOneValue(t *testing.T) {
-	var timeSeries *TimeSeries
-	timeSeries = testCreateUpdateFetch(t, Average, 0.5, 3500, 3500, 1, 300, 0.5, 0.2)
+	timeSeries := testCreateUpdateFetch(t, Average, 0.5, 3500, 3500, 1, 300, 0.5, 0.2)
 	if len(timeSeries.values) > 1 {
 		t.Fatalf("More then one point fetched\n")
 	}
@@ -546,6 +552,7 @@ func printPoints(points []*TimeSeriesPoint) {
 	fmt.Println("]")
 }
 
+// skipcq: RVV-B0001
 func TestCreateUpdateManyFetch(t *testing.T) {
 	var timeSeries *TimeSeries
 
@@ -718,11 +725,17 @@ func TestUpdateManyWithEqualTimestamp(t *testing.T) {
 
 	for i := 0; i < 100; i++ {
 		if i%2 == 0 {
-			points = append(points, &TimeSeriesPoint{now, float64(i)})
-			points = append(points, &TimeSeriesPoint{now - 1, float64(100 - i)})
+			points = append(
+				points,
+				&TimeSeriesPoint{now, float64(i)},
+				&TimeSeriesPoint{now - 1, float64(100 - i)},
+			)
 		} else {
-			points = append(points, &TimeSeriesPoint{now, float64(100 - i)})
-			points = append(points, &TimeSeriesPoint{now - 1, float64(i)})
+			points = append(
+				points,
+				&TimeSeriesPoint{now, float64(100 - i)},
+				&TimeSeriesPoint{now - 1, float64(i)},
+			)
 		}
 	}
 
@@ -855,4 +868,267 @@ func TestPackSequences(t *testing.T) {
 		t.Errorf("intervals unmatch, got=%v, want=%v",
 			gotIntervals, wantIntervals)
 	}
+}
+
+var keepUpdateConfigTestData = flag.Bool("keep-update-config-test-data", false, "keep update config test data")
+
+// TODO: mix aggregation policy
+func TestUpdateConfig(t *testing.T) {
+	for _, c := range []struct {
+		oldRets        string
+		newRets        string
+		oldAggregation AggregationMethod
+		newAggregation AggregationMethod
+		oldXFF         float32
+		newXFF         float32
+		checkRanges    [][2]time.Duration
+	}{
+		{
+			oldRets:        "1m:30d,1h:10y",
+			newRets:        "1m:60d,1h:20y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 30, 0}, {-3600 * 24 * 3650, 0}},
+		},
+		{
+			oldRets:        "1m:60d,1h:20y",
+			newRets:        "1m:30d,1h:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 30, 0}, {-3600 * 24 * 3650, 0}},
+		},
+
+		{
+			oldRets:        "1m:30d,1h:10y",
+			newRets:        "1s:2d,30s:60d,30m:20y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			// checkRanges:    [][2]time.Duration{},
+		},
+		{
+			oldRets:        "1s:2d,30s:60d,30m:20y",
+			newRets:        "1m:30d,1h:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			// checkRanges:    [][2]time.Duration{},
+		},
+
+		{
+			oldRets:        "1m:30d,1h:10y",
+			newRets:        "1m:60d,1h:5y,1d:100y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 30, 0}, {-3600 * 24 * 365 * 5, 0}},
+		},
+		{
+			oldRets:        "1m:60d,1h:5y,1d:100y",
+			newRets:        "1m:30d,1h:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 30, 0}, {-3600 * 24 * 365 * 5, 0}},
+		},
+
+		{
+			oldRets:        "1m:30d,1h:10y",
+			newRets:        "1m:60d,30m:1y,1h:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 30, 0}, {-3600 * 24 * 365 * 10, 0}},
+		},
+		{
+			oldRets:        "1m:60d,30m:1y,1h:10y",
+			newRets:        "1m:30d,1h:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 30, 0}, {-3600 * 24 * 365 * 10, 0}},
+		},
+
+		{
+			oldRets:        "1m:30d,1h:10y",
+			newRets:        "30s:30d,30m:1y,1h:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 365 * 10, 0}},
+		},
+		{
+			oldRets:        "30s:30d,30m:1y,1h:10y",
+			newRets:        "1m:30d,1h:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 365 * 10, 0}},
+		},
+
+		{
+			oldRets:        "1m:30d,1h:10y",
+			newRets:        "1s:4d,1m:60d,1h:20y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 30, 0}, {-3600 * 24 * 365 * 10, 0}},
+		},
+		{
+			oldRets:        "1s:4d,1m:60d,1h:20y",
+			newRets:        "1m:30d,1h:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 30, 0}, {-3600 * 24 * 365 * 10, 0}},
+		},
+
+		{
+			oldRets:        "1m:30d,1h:10y",
+			newRets:        "1s:4d,1m:20d,1h:20y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 20, 0}, {-3600 * 24 * 365 * 10, 0}},
+		},
+		{
+			oldRets:        "1s:4d,1m:20d,1h:20y",
+			newRets:        "1m:30d,1h:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 20, 0}, {-3600 * 24 * 365 * 10, 0}},
+		},
+
+		{
+			oldRets:        "1m:30d,1h:1y,1d:10y",
+			newRets:        "1m:2d,1h:1y,1d:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600*24*2 + 120, 0}, {-3600*24*365*1 + 3600, 0}, {-3600*24*365*10 + 86400, 0}},
+		},
+
+		{
+			oldRets:        "1m:30d,30m:184d,1h:1y,1d:10y",
+			newRets:        "1m:30d,1h:1y,1d:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600*24*30 + 120, 0}, {-3600*24*365*1 + 86400, 0}, {-3600*24*365*10 + 86400, 0}},
+		},
+
+		// no retetion changes
+		{
+			oldRets:        "1m:30d,1h:10y",
+			newRets:        "1m:30d,1h:10y",
+			oldAggregation: Average,
+			newAggregation: Sum,
+			oldXFF:         0.5,
+			newXFF:         0,
+			checkRanges:    [][2]time.Duration{{-3600 * 24 * 30, 0}, {-3600 * 24 * 3650, -3600}}, // why -3600 for 1h:10y: cwhisper does live aggregation from higher-resolutions archive
+		},
+	} {
+		for _, wtype := range []string{"compressed", "standard"} {
+			name := strings.ReplaceAll(fmt.Sprintf("%s-%s", c.oldRets, c.newRets), ",", "_")
+			oldRets := MustParseRetentionDefs(c.oldRets)
+			newRets := MustParseRetentionDefs(c.newRets)
+
+			t.Run(fmt.Sprintf("%s.%s", name, wtype), func(t *testing.T) {
+				testFilename := fmt.Sprintf("config-update.%s.%s.wsp", name, wtype)
+				originalFilename := fmt.Sprintf("config-update.%s.%s.original.wsp", name, wtype)
+				compressed := wtype == "compressed"
+				os.Remove(testFilename)
+				os.Remove(originalFilename)
+
+				classic, err := CreateWithOptions(testFilename, oldRets, c.oldAggregation, c.oldXFF, &Options{Compressed: compressed})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if err := populateTestFile(classic, 1); err != nil {
+					t.Fatal(err)
+				}
+
+				classic.Close()
+				exec.Command("cp", testFilename, originalFilename).CombinedOutput()
+
+				classic, err = OpenWithOptions(testFilename, &Options{})
+				if err != nil {
+					t.Error(err)
+				}
+
+				if err := classic.UpdateConfig(newRets, c.newAggregation, c.newXFF, &Options{Compressed: compressed}); err != nil {
+					t.Error(err)
+				}
+				classic.Close()
+
+				newfile, err := OpenWithOptions(testFilename, &Options{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				oldfile, err := OpenWithOptions(originalFilename, &Options{})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				t.Log("Compare values after update")
+				for _, crange := range c.checkRanges {
+					compareWhisperFiles(t, newfile, oldfile, int(Now().Add(time.Second*crange[0]).Unix()), int(Now().Add(time.Second*crange[1]).Unix()))
+				}
+
+				if got, want := newfile.aggregationMethod, c.newAggregation; got != want {
+					t.Errorf("newfile.aggregationMethod = %s; want %s", got, want)
+				}
+				if got, want := newfile.xFilesFactor, c.newXFF; got != want {
+					t.Errorf("newfile.xFilesFactor = %v; want %v", got, want)
+				}
+
+				if !*keepUpdateConfigTestData {
+					os.Remove(testFilename)
+					os.Remove(originalFilename)
+				}
+			})
+		}
+	}
+}
+
+func populateTestFile(w *Whisper, gapn int) error {
+	start := Now()
+	for _, r := range w.Retentions() {
+		var ps []*TimeSeriesPoint
+		ptime := start.Add(-time.Second * time.Duration(r.MaxRetention()))
+		for i := 0; i <= r.numberOfPoints; i += gapn {
+			ps = append(ps, &TimeSeriesPoint{
+				Time:  int(ptime.Add(time.Second * time.Duration(i*r.secondsPerPoint)).Unix()),
+				Value: rand.NormFloat64(),
+				// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
+				// Value: float64(rand.Intn(100000)),
+			})
+		}
+
+		if err := w.UpdateManyForArchive(ps, r.MaxRetention()); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
