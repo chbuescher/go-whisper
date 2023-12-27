@@ -1,5 +1,5 @@
 /*
-	Package whisper implements Graphite's Whisper database format
+Package whisper implements Graphite's Whisper database format
 */
 package whisper
 
@@ -106,16 +106,17 @@ func ParseAggregationMethod(am string) AggregationMethod {
 }
 
 type Options struct {
-	Sparse bool
-	FLock  bool
-
+	Sparse     bool
+	FLock      bool
+	FlockType  int
 	Compressed bool
 	// It's a hint, used if the retention is big enough, more in
 	// Retention.calculateSuitablePointsPerBlock
-	PointsPerBlock int
-	PointSize      float32
-	InMemory       bool
-	OpenFileFlag   *int
+	PointsPerBlock  int
+	PointSize       float32
+	InMemory        bool
+	InMemoryContent []byte
+	OpenFileFlag    *int
 
 	MixAggregationSpecs        []MixAggregationSpec
 	MixAvgCompressedPointSizes map[int][]float32
@@ -144,7 +145,7 @@ type file interface {
 }
 
 /*
-	Represents a Whisper database file.
+Represents a Whisper database file.
 */
 type Whisper struct {
 	// file *os.File
@@ -172,10 +173,10 @@ type Whisper struct {
 }
 
 /*
-  A retention level.
+A retention level.
 
-  Retention levels describe a given archive in the database. How detailed it is and how far back
-  it records.
+Retention levels describe a given archive in the database. How detailed it is and how far back
+it records.
 */
 type Retention struct {
 	secondsPerPoint int
@@ -187,10 +188,10 @@ type Retention struct {
 }
 
 /*
-  Describes a time series in a file.
+Describes a time series in a file.
 
-  The only addition this type has over a Retention is the offset at which it exists within the
-  whisper file.
+The only addition this type has over a Retention is the offset at which it exists within the
+whisper file.
 */
 type archiveInfo struct {
 	Retention
@@ -295,13 +296,13 @@ func parseRetentionPart(retentionPart string) (int, error) {
 }
 
 /*
-  Parse a retention definition as you would find in the storage-schemas.conf of a Carbon install.
-  Note that this only parses a single retention definition, if you have multiple definitions (separated by a comma)
-  you will have to split them yourself.
+Parse a retention definition as you would find in the storage-schemas.conf of a Carbon install.
+Note that this only parses a single retention definition, if you have multiple definitions (separated by a comma)
+you will have to split them yourself.
 
-  ParseRetentionDef("10s:14d") Retention{10, 120960}
+ParseRetentionDef("10s:14d") Retention{10, 120960}
 
-  See: http://graphite.readthedocs.org/en/1.0/config-carbon.html#storage-schemas-conf
+See: http://graphite.readthedocs.org/en/1.0/config-carbon.html#storage-schemas-conf
 */
 func ParseRetentionDef(retentionDef string) (*Retention, error) {
 	parts := strings.Split(retentionDef, ":")
@@ -355,7 +356,7 @@ func (whisper *Whisper) fileReadAt(b []byte, off int64) error {
 }
 
 /*
-	Create a new Whisper database file and write it's header.
+Create a new Whisper database file and write it's header.
 */
 func Create(path string, retentions Retentions, aggregationMethod AggregationMethod, xFilesFactor float32) (whisper *Whisper, err error) {
 	return CreateWithOptions(path, retentions, aggregationMethod, xFilesFactor, &Options{
@@ -367,7 +368,8 @@ func Create(path string, retentions Retentions, aggregationMethod AggregationMet
 // CreateWithOptions is more customizable create function
 //
 // avgCompressedPointSize specification order:
-// 		Options.PointSize < Retention.avgCompressedPointSize < Options.MixAggregationSpecs.AvgCompressedPointSize
+//
+//	Options.PointSize < Retention.avgCompressedPointSize < Options.MixAggregationSpecs.AvgCompressedPointSize
 func CreateWithOptions(path string, retentions Retentions, aggregationMethod AggregationMethod, xFilesFactor float32, options *Options) (whisper *Whisper, err error) {
 	if options == nil {
 		options = &Options{}
@@ -581,7 +583,7 @@ func validateRetentions(retentions Retentions) error {
 }
 
 /*
-  Open an existing Whisper database and read it's header
+Open an existing Whisper database and read it's header
 */
 func Open(path string) (whisper *Whisper, err error) {
 	return OpenWithOptions(path, &Options{
@@ -592,13 +594,15 @@ func Open(path string) (whisper *Whisper, err error) {
 func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error) {
 	var file file
 	if options.InMemory {
-		file = newMemFile(path)
-	} else if options.FLock {
-		flag := os.O_RDWR
-		if options.OpenFileFlag != nil {
-			flag = *options.OpenFileFlag
+		if mc := options.InMemoryContent; mc != nil {
+			file = &memFile{
+				name:   path,
+				data:   mc,
+				offset: 0,
+			}
+		} else {
+			file = newMemFile(path)
 		}
-		file, err = lockedfile.OpenFile(path, flag, 0666)
 	} else {
 		flag := os.O_RDWR
 		if options.OpenFileFlag != nil {
@@ -726,14 +730,14 @@ func (whisper *Whisper) crc32Offset() int {
 }
 
 /*
-  Close the whisper file
+Close the whisper file
 */
 func (whisper *Whisper) Close() error {
 	return whisper.file.Close()
 }
 
 /*
-  Calculate the total number of bytes the Whisper file should be according to the metadata.
+Calculate the total number of bytes the Whisper file should be according to the metadata.
 */
 func (whisper *Whisper) Size() int {
 	size := whisper.MetadataSize()
@@ -748,7 +752,7 @@ func (whisper *Whisper) Size() int {
 }
 
 /*
-  Calculate the number of bytes the metadata section will be.
+Calculate the number of bytes the metadata section will be.
 */
 func (whisper *Whisper) MetadataSize() int {
 	if whisper.compressed {
@@ -805,10 +809,10 @@ func (whisper *Whisper) Retentions() []Retention {
 }
 
 /*
-  Update a value in the database.
+Update a value in the database.
 
-  If the timestamp is in the future or outside of the maximum retention it will
-  fail immediately.
+If the timestamp is in the future or outside of the maximum retention it will
+fail immediately.
 */
 func (whisper *Whisper) Update(value float64, timestamp int) (err error) {
 	// recover panics and return as error
@@ -871,7 +875,7 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 }
 
 /*
-  Returns updated amount of out-of-order discarded points since opening whisper file
+Returns updated amount of out-of-order discarded points since opening whisper file
 */
 func (whisper *Whisper) GetDiscardedPointsSinceOpen() uint32 {
 	var discardedPointsNow uint32
@@ -914,13 +918,7 @@ func (whisper *Whisper) UpdateManyForArchive(points []*TimeSeriesPoint, targetRe
 		if targetRetention != -1 && targetRetention != archive.MaxRetention() {
 			continue
 		}
-
-		if whisper.opts.IgnoreNowOnWrite {
-			currentPoints = points
-			points = []*TimeSeriesPoint{}
-		} else {
-			currentPoints, points = extractPoints(points, now, archive.MaxRetention())
-		}
+		currentPoints, points = extractPoints(points, now, archive.MaxRetention())
 
 		if len(currentPoints) == 0 {
 			continue
@@ -946,7 +944,7 @@ func (whisper *Whisper) UpdateManyForArchive(points []*TimeSeriesPoint, targetRe
 		if err != nil {
 			return
 		}
-		if len(points) == 0 { // nothing left to do
+		if len(points) == 0 || whisper.opts.IgnoreNowOnWrite { // nothing left to do or writing to lower archives is forbidden
 			break
 		}
 	}
@@ -1074,9 +1072,9 @@ func packSequences(archive *archiveInfo, points []dataPoint) (intervals []int, p
 }
 
 /*
-	Calculate the offset for a given interval in an archive
+Calculate the offset for a given interval in an archive
 
-	This method retrieves the baseInterval and the
+This method retrieves the baseInterval and the
 */
 func (whisper *Whisper) getPointOffset(start int, archive *archiveInfo) int64 {
 	baseInterval := whisper.getBaseInterval(archive)
@@ -1217,7 +1215,7 @@ func (whisper *Whisper) checkSeriesEmptyAt(start, length int64, fromTime, untilT
 }
 
 /*
-  Calculate the starting time for a whisper db.
+Calculate the starting time for a whisper db.
 */
 func (whisper *Whisper) StartTime() int {
 	now := int(Now().Unix()) // TODO: danger of 2030 something overflow
@@ -1225,7 +1223,7 @@ func (whisper *Whisper) StartTime() int {
 }
 
 /*
-  Fetch a TimeSeries for a given time span from the file.
+Fetch a TimeSeries for a given time span from the file.
 */
 func (whisper *Whisper) Fetch(fromTime, untilTime int) (timeSeries *TimeSeries, err error) {
 	return whisper.FetchByAggregation(fromTime, untilTime, nil)
@@ -1291,11 +1289,13 @@ func (whisper *Whisper) fetchFromArchive(archive *archiveInfo, fromTime, untilTi
 		for i := range values {
 			values[i] = math.NaN()
 		}
+		// fetched data can be out of order (because of buffer)
+		// so, let's sort it out
 		step := archive.secondsPerPoint
 		for _, dPoint := range series {
 			index := (dPoint.interval - fromInterval) / archive.secondsPerPoint
-			if index >= len(values) {
-				break
+			if index >= len(values) || index < 0 {
+				continue
 			}
 			values[index] = dPoint.value
 		}
@@ -1344,7 +1344,7 @@ func (whisper *Whisper) fetchFromArchive(archive *archiveInfo, fromTime, untilTi
 }
 
 /*
-  Check a TimeSeries has a points for a given time span from the file.
+Check a TimeSeries has a points for a given time span from the file.
 */
 func (whisper *Whisper) CheckEmpty(fromTime, untilTime int) (exist bool, err error) {
 	now := int(Now().Unix()) // TODO: danger of 2030 something overflow
@@ -1708,8 +1708,8 @@ func getFirstDataPointStrict(b []byte) dataPoint {
 }
 
 /*
-	Implementation of modulo that works like Python
-	Thanks @timmow for this
+Implementation of modulo that works like Python
+Thanks @timmow for this
 */
 func mod(a, b int) int {
 	return a - (b * int(math.Floor(float64(a)/float64(b))))
