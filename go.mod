@@ -1,4 +1,4 @@
-module github.com/go-graphite/go-whisper
+module github.com/chbuescher/go-whisper
 
 go 1.18
 
